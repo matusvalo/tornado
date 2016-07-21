@@ -41,6 +41,7 @@ from tornado.log import gen_log, app_log
 from tornado.netutil import ssl_wrap_socket, ssl_match_hostname, SSLCertificateError, _client_ssl_defaults, _server_ssl_defaults
 from tornado import stack_context
 from tornado.util import errno_from_exception
+from tornado.iostreamexceptions import StreamClosedError, StreamBufferFullError, UnsatisfiableReadError
 
 try:
     from tornado.platform.posix import _set_nonblocking
@@ -82,38 +83,6 @@ _ERRNO_INPROGRESS = (errno.EINPROGRESS,)
 
 if hasattr(errno, "WSAEINPROGRESS"):
     _ERRNO_INPROGRESS += (errno.WSAEINPROGRESS,)  # type: ignore
-
-
-class StreamClosedError(IOError):
-    """Exception raised by `IOStream` methods when the stream is closed.
-
-    Note that the close callback is scheduled to run *after* other
-    callbacks on the stream (to allow for buffered data to be processed),
-    so you may see this error before you see the close callback.
-
-    The ``real_error`` attribute contains the underlying error that caused
-    the stream to close (if any).
-
-    .. versionchanged:: 4.3
-       Added the ``real_error`` attribute.
-    """
-    def __init__(self, real_error=None):
-        super(StreamClosedError, self).__init__('Stream is closed')
-        self.real_error = real_error
-
-
-class UnsatisfiableReadError(Exception):
-    """Exception raised when a read cannot be satisfied.
-
-    Raised by ``read_until`` and ``read_until_regex`` with a ``max_bytes``
-    argument.
-    """
-    pass
-
-
-class StreamBufferFullError(Exception):
-    """Exception raised by `IOStream` methods when the buffer is full.
-    """
 
 
 class BaseIOStream(object):
@@ -1396,54 +1365,3 @@ class PipeIOStream(BaseIOStream):
             return None
         return chunk
 
-
-def _double_prefix(deque):
-    """Grow by doubling, but don't split the second chunk just because the
-    first one is small.
-    """
-    new_len = max(len(deque[0]) * 2,
-                  (len(deque[0]) + len(deque[1])))
-    _merge_prefix(deque, new_len)
-
-
-def _merge_prefix(deque, size):
-    """Replace the first entries in a deque of strings with a single
-    string of up to size bytes.
-
-    >>> d = collections.deque(['abc', 'de', 'fghi', 'j'])
-    >>> _merge_prefix(d, 5); print(d)
-    deque(['abcde', 'fghi', 'j'])
-
-    Strings will be split as necessary to reach the desired size.
-    >>> _merge_prefix(d, 7); print(d)
-    deque(['abcdefg', 'hi', 'j'])
-
-    >>> _merge_prefix(d, 3); print(d)
-    deque(['abc', 'defg', 'hi', 'j'])
-
-    >>> _merge_prefix(d, 100); print(d)
-    deque(['abcdefghij'])
-    """
-    if len(deque) == 1 and len(deque[0]) <= size:
-        return
-    prefix = []
-    remaining = size
-    while deque and remaining > 0:
-        chunk = deque.popleft()
-        if len(chunk) > remaining:
-            deque.appendleft(chunk[remaining:])
-            chunk = chunk[:remaining]
-        prefix.append(chunk)
-        remaining -= len(chunk)
-    # This data structure normally just contains byte strings, but
-    # the unittest gets messy if it doesn't use the default str() type,
-    # so do the merge based on the type of data that's actually present.
-    if prefix:
-        deque.appendleft(type(prefix[0])().join(prefix))
-    if not deque:
-        deque.appendleft(b"")
-
-
-def doctests():
-    import doctest
-    return doctest.DocTestSuite()

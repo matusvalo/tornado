@@ -1,8 +1,9 @@
 import collections
+from tornado.iostreamexceptions import UnsatisfiableReadError
 
 WRITE_BUFFER_CHUNK_SIZE = 128 * 1024
 
-class IOStreamBuffer(object):
+class __IOStreamBuffer(object):
 
     def __init__(self, max_write_buffer_size):
         self._max_write_buffer_size = max_write_buffer_size
@@ -11,7 +12,7 @@ class IOStreamBuffer(object):
         self._write_buffer_frozen = False
         self._read_buffer_size = 0
         self._write_buffer_size = 0
-        self._read_max_bytes = None
+        self.read_max_bytes = None
 
     def consume(self, loc):
         if loc == 0:
@@ -71,16 +72,6 @@ class IOStreamBuffer(object):
 
     def set_write_buffer_frozen(self):
         self._write_buffer_frozen = True
-
-
-    @property
-    def read_max_bytes(self):
-        return self._read_max_bytes
-
-    @read_max_bytes.setter
-    def read_max_bytes(self, b):
-        self._read_max_bytes = b
-
 
 
     def _check_max_bytes(self, delimiter, size):
@@ -183,6 +174,10 @@ def _merge_prefix(deque, size):
     if not deque:
         deque.appendleft(b"")
 
+from speedups import IOStreamBuffer as __C_IOStreamBuffer
+
+IOStreamBuffer = __C_IOStreamBuffer
+# IOStreamBuffer = __IOStreamBuffer
 
 def doctests():
     import doctest
