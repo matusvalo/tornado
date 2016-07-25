@@ -6,6 +6,7 @@ typedef struct {
     /* Type-specific fields go here. */
     int read_buffer_size;
     int write_buffer_size;
+    PyObject *stream;
     PyObject *read_buffer;
     PyObject *write_buffer;
     int max_write_buffer_size;
@@ -41,6 +42,12 @@ static int
 IOStreamBuffer_init(IOStreamBufferObject *self, PyObject *args, PyObject *kwds);
 
 static PyObject *
+IOStreamBuffer_get_read_max_bytes(IOStreamBufferObject *self, void *closure);
+
+static int
+IOStreamBuffer_set_read_max_bytes(IOStreamBufferObject *self, PyObject *value, void *closure);
+
+static PyObject *
 IOStreamBuffer_find_read_pos(IOStreamBufferObject* self, PyObject* args);
 
 static PyObject *
@@ -63,10 +70,17 @@ static PyMethodDef methods[] = {
     {NULL, NULL, 0, NULL}
 };
 
+static PyGetSetDef IOStreamBuffer_getseters[] = {
+    {"read_max_bytes",
+     (getter)IOStreamBuffer_get_read_max_bytes, (setter)IOStreamBuffer_set_read_max_bytes,
+     "", NULL},
+    {NULL}  /* Sentinel */
+};
+
 static PyMethodDef IOStreamBuffer_methods[] = {
     {"consume", (PyCFunction) IOStreamBuffer_consume, METH_VARARGS, ""},
-    {"write_to_stream", (PyCFunction) IOStreamBuffer_write_to_stream, METH_VARARGS, ""},
-    {"read_from_stream", (PyCFunction) IOStreamBuffer_read_from_stream, METH_VARARGS, ""},
+    {"write_to_stream", (PyCFunction) IOStreamBuffer_write_to_stream, METH_NOARGS, ""},
+    {"read_from_stream", (PyCFunction) IOStreamBuffer_read_from_stream, METH_NOARGS, ""},
     {"add_to_buffer", (PyCFunction) IOStreamBuffer_add_to_buffer, METH_VARARGS, ""},
     {"find_read_pos", (PyCFunction) IOStreamBuffer_find_read_pos, METH_VARARGS, ""},
     {"set_write_buffer_frozen", (PyCFunction) IOStreamBuffer_set_write_buffer_frozen, METH_NOARGS, ""},
@@ -80,7 +94,7 @@ static PyMemberDef IOStreamBuffer_members[] = {
     {"_write_buffer_frozen", T_INT, offsetof(IOStreamBufferObject, write_buffer_frozen), 0, ""},
     {"_read_buffer_size", T_INT, offsetof(IOStreamBufferObject, read_buffer_size), 0, ""},
     {"_write_buffer_size", T_INT, offsetof(IOStreamBufferObject, write_buffer_size), 0, ""},
-    {"read_max_bytes", T_INT, offsetof(IOStreamBufferObject, read_max_bytes), 0, ""},
+    //{"read_max_bytes", T_INT, offsetof(IOStreamBufferObject, read_max_bytes), 0, ""},
     {NULL}  /* Sentinel */
 };
 
@@ -115,7 +129,7 @@ static PyTypeObject speedups_IOStreamBufferType = {
     0,                     /* tp_iternext */
     IOStreamBuffer_methods,             /* tp_methods */
     IOStreamBuffer_members,                         /* tp_members */
-    0,                         /* tp_getset */
+    IOStreamBuffer_getseters,                         /* tp_getset */
     0,                         /* tp_base */
     0,                         /* tp_dict */
     0,                         /* tp_descr_get */

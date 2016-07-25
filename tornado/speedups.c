@@ -5,12 +5,12 @@
 
 #define WRITE_BUFFER_CHUNK_SIZE = (128 * 1024)
 
-#define MAX(a,b)                  \
+#define MAX(a,b)                   \
        ({ __typeof__ (a) _a = (a); \
           __typeof__ (b) _b = (b); \
           _a > _b ? _a : _b; })
 
-#define MIN(a,b)                  \
+#define MIN(a,b)                   \
        ({ __typeof__ (a) _a = (a); \
           __typeof__ (b) _b = (b); \
           _a < _b ? _a : _b; })
@@ -20,7 +20,6 @@ check_max_bytes(int read_max_bytes, int size)
 {
     int _read_max_bytes = (read_max_bytes);
     if(_read_max_bytes != -1 && (size) > _read_max_bytes) {
-        PyErr_SetString(unsatisfiable_read_error, "delimiter %r not found within %d bytes");
         return 0;
     }
     return 1;
@@ -74,8 +73,9 @@ merge_prefix(PyObject* deque, int size)
             PyObject_CallMethod(deque, "appendleft", "O", s);
             Py_DECREF(s);
 
+            PyObject *new_chunk = PySequence_GetSlice(chunk, 0, remaining);
             Py_DECREF(chunk);
-            chunk = PySequence_GetSlice(chunk, 0, remaining);
+            chunk = new_chunk;
 
         }
         PyList_Append(prefix, chunk);
@@ -84,12 +84,14 @@ merge_prefix(PyObject* deque, int size)
         Py_DECREF(chunk);
     }
 
-    if(PySequence_Size > 0) {
+    if(PySequence_Size(prefix) > 0) {
         PyObject *item = PySequence_ITEM(prefix, 0);
         PyObject *type = PyObject_Type(item);
         PyObject *obj = PyObject_CallObject(type, NULL);
-        PyObject_CallMethod(obj,"join", "O", prefix);
+        PyObject *joined_prefix = PyObject_CallMethod(obj,"join", "O", prefix);
+        PyObject_CallMethod(deque, "appendleft", "O", joined_prefix);
 
+        Py_DECREF(joined_prefix);
         Py_DECREF(item);
         Py_DECREF(type);
         Py_DECREF(obj);
@@ -119,6 +121,7 @@ IOStreamBuffer_dealloc(IOStreamBufferObject* self)
 {
     Py_XDECREF(self->read_buffer);
     Py_XDECREF(self->write_buffer);
+    Py_XDECREF(self->stream);
     self->ob_type->tp_free((PyObject*)self);
 }
 
@@ -133,6 +136,8 @@ IOStreamBuffer_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     self->write_buffer = Py_None;
     Py_INCREF(Py_None);
     self->read_buffer = Py_None;
+    Py_INCREF(Py_None);
+    self->stream = Py_None;
     self->max_write_buffer_size = -1;
     self->write_buffer_frozen = 0;
     self->read_max_bytes = -1;
@@ -142,13 +147,22 @@ IOStreamBuffer_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 static int
 IOStreamBuffer_init(IOStreamBufferObject *self, PyObject *args, PyObject *kwds)
 {
+    Py_DECREF(Py_None);
     self->read_buffer = PyObject_CallMethod(collections_module, "deque", NULL);
+    if (self->read_buffer == NULL)
+        return -1;
+    Py_DECREF(Py_None);
     self->write_buffer = PyObject_CallMethod(collections_module, "deque", NULL);
+    if (self->read_buffer == NULL)
+        return -1;
     PyObject *max_write_buffer_size;
-    if (!PyArg_ParseTuple(args, "O", &max_write_buffer_size)) {
+    PyObject *stream;
+    if (!PyArg_ParseTuple(args, "OO", &stream, &max_write_buffer_size)) {
         return -1;
     }
     Py_INCREF(max_write_buffer_size);
+    Py_INCREF(stream);
+    self->stream = stream;
     if (max_write_buffer_size == Py_None) {
         self->max_write_buffer_size = -1;
     } else {
@@ -156,6 +170,27 @@ IOStreamBuffer_init(IOStreamBufferObject *self, PyObject *args, PyObject *kwds)
     }
     Py_DECREF(max_write_buffer_size);
 
+    return 0;
+}
+
+static PyObject *
+IOStreamBuffer_get_read_max_bytes(IOStreamBufferObject *self, void *closure)
+{
+    if (self->read_max_bytes == -1) {
+        Py_RETURN_NONE;
+    } else {
+        return PyLong_FromLong(self->read_max_bytes);
+    }
+}
+
+static int
+IOStreamBuffer_set_read_max_bytes(IOStreamBufferObject *self, PyObject *value, void *closure)
+{
+    if (value == Py_None) {
+        self->read_max_bytes = -1;
+    } else {
+        self->read_max_bytes = PyLong_AsLong(value);
+    }
     return 0;
 }
 
@@ -204,8 +239,9 @@ IOStreamBuffer_find_read_pos(IOStreamBufferObject* self, PyObject* args)
                 if (loc != -1) {
                     int delimiter_len = PySequence_Size(read_delimiter);
 
-                    if (! check_max_bytes(self->read_max_bytes, loc + delimiter_len))
-                        goto ONERROR;
+                    if (! check_max_bytes(self->read_max_bytes, loc + delimiter_len)) {
+                        goto MAX_BYTES_ERROR;
+                    }
                     Py_DECREF(read_bytes);
                     Py_DECREF(read_delimiter);
                     Py_DECREF(read_partial);
@@ -217,9 +253,10 @@ IOStreamBuffer_find_read_pos(IOStreamBufferObject* self, PyObject* args)
                 double_prefix(self->read_buffer);
             }
             PyObject *item = PySequence_ITEM(self->read_buffer, 0);
-            if (! check_max_bytes(self->read_max_bytes, PySequence_Size(item)))
+            if (! check_max_bytes(self->read_max_bytes, PySequence_Size(item))) {
                 Py_DECREF(item);
-                goto ONERROR;
+                goto MAX_BYTES_ERROR;
+            }
             Py_DECREF(item);
         }
     } else if (read_regex != Py_None) {
@@ -235,8 +272,9 @@ IOStreamBuffer_find_read_pos(IOStreamBufferObject* self, PyObject* args)
                     Py_DECREF(m);
                     int cmend = PyLong_AsLong(mend);
                     Py_DECREF(mend);
-                    if (! check_max_bytes(self->read_max_bytes, cmend))
-                        goto ONERROR;
+                    if (! check_max_bytes(self->read_max_bytes, cmend)) {
+                        goto MAX_BYTES_ERROR;
+                    }
                     Py_DECREF(read_bytes);
                     Py_DECREF(read_delimiter);
                     Py_DECREF(read_partial);
@@ -244,12 +282,17 @@ IOStreamBuffer_find_read_pos(IOStreamBufferObject* self, PyObject* args)
                     return PyLong_FromLong(cmend);
                 }
                 Py_DECREF(m);
-                if (PySequence_Size(self->read_buffer) == 1)
+                if (PySequence_Size(self->read_buffer) == 1) {
                     break;
+                }
                 double_prefix(self->read_buffer);
             }
-            if (! check_max_bytes(self->read_max_bytes, PySequence_Size(self->read_buffer)))
-                goto ONERROR;
+            PyObject *item = PySequence_ITEM(self->read_buffer, 0);
+            if (! check_max_bytes(self->read_max_bytes, PySequence_Size(item))) {
+                Py_DECREF(item);
+                goto MAX_BYTES_ERROR;
+            }
+            Py_DECREF(item);
         }
     }
     Py_DECREF(read_bytes);
@@ -258,11 +301,12 @@ IOStreamBuffer_find_read_pos(IOStreamBufferObject* self, PyObject* args)
     Py_DECREF(read_regex);
     Py_RETURN_NONE;
 
-ONERROR:
+MAX_BYTES_ERROR:
     Py_DECREF(read_bytes);
     Py_DECREF(read_delimiter);
     Py_DECREF(read_partial);
     Py_DECREF(read_regex);
+    PyErr_SetString(unsatisfiable_read_error, "delimiter %r not found within %d bytes");
     return NULL;
 
 }
@@ -270,21 +314,20 @@ ONERROR:
 static PyObject *
 IOStreamBuffer_write_to_stream(IOStreamBufferObject* self, PyObject* args)
 {
-    PyObject *stream;
-    if (!PyArg_ParseTuple(args, "O", &stream)) {
-        return NULL;
-    }
-
-    Py_INCREF(stream);
     if (! self->write_buffer_frozen) {
         merge_prefix(self->write_buffer, 127 * 1024);
     }
 
     PyObject *write_to_fd_method_name = PyString_FromString("write_to_fd");
     PyObject *item = PySequence_ITEM(self->write_buffer, 0);
-    PyObject *pynum_bytes = PyObject_CallMethodObjArgs(stream,
+    PyObject *pynum_bytes = PyObject_CallMethodObjArgs(self->stream,
                                                      write_to_fd_method_name,
                                                      item, NULL);
+    if (pynum_bytes == NULL) {
+        Py_DECREF(write_to_fd_method_name);
+        Py_DECREF(item);
+        return NULL;
+    }
     Py_DECREF(write_to_fd_method_name);
     int num_bytes = PyInt_AS_LONG(pynum_bytes);
     Py_DECREF(pynum_bytes);
@@ -292,27 +335,21 @@ IOStreamBuffer_write_to_stream(IOStreamBufferObject* self, PyObject* args)
     Py_DECREF(item);
     if (num_bytes == 0) {
         self->write_buffer_frozen = 1;
-        Py_DECREF(stream);
         Py_RETURN_FALSE;
     }
     self->write_buffer_frozen = 0;
     merge_prefix(self->write_buffer, num_bytes);
     PyObject_CallMethod(self->write_buffer, "popleft", NULL);
     self->write_buffer_size -= num_bytes;
-    Py_DECREF(stream);
     Py_RETURN_TRUE;
 }
 
 static PyObject *
 IOStreamBuffer_read_from_stream(IOStreamBufferObject* self, PyObject* args)
 {
-    PyObject *stream;
-    if (!PyArg_ParseTuple(args, "O", &stream)) {
+    PyObject *chunk = PyObject_CallMethod(self->stream, "read_from_fd", NULL);
+    if (chunk == NULL)
         return NULL;
-    }
-    Py_INCREF(stream);
-    PyObject *chunk = PyObject_CallMethod(stream, "read_from_fd", NULL);
-    Py_DECREF(stream);
     if (chunk == Py_None) {
         Py_DECREF(chunk);
         return PyLong_FromLong(0);
@@ -356,7 +393,7 @@ IOStreamBuffer_add_to_buffer(IOStreamBufferObject *self, PyObject *args)
         if (self->max_write_buffer_size != -1 &&
             self->write_buffer_size + data_len > self->max_write_buffer_size) {
             PyErr_SetString(stream_buffer_full_error, "Reached maximum write buffer size");
-            Py_INCREF(data);
+            Py_DECREF(data);
             return NULL;
         }
         PyObject *append_method_name = PyString_FromString("append");

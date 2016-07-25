@@ -5,7 +5,8 @@ WRITE_BUFFER_CHUNK_SIZE = 128 * 1024
 
 class __IOStreamBuffer(object):
 
-    def __init__(self, max_write_buffer_size):
+    def __init__(self, stream, max_write_buffer_size):
+        self._stream = stream
         self._max_write_buffer_size = max_write_buffer_size
         self._read_buffer = collections.deque()
         self._write_buffer = collections.deque()
@@ -75,13 +76,13 @@ class __IOStreamBuffer(object):
 
 
     def _check_max_bytes(self, delimiter, size):
-        if (self._read_max_bytes is not None and
-                size > self._read_max_bytes):
+        if (self.read_max_bytes is not None and
+                size > self.read_max_bytes):
             raise UnsatisfiableReadError(
                 "delimiter %r not found within %d bytes" % (
-                    delimiter, self._read_max_bytes))
+                    delimiter, self.read_max_bytes))
 
-    def write_to_stream(self, stream):
+    def write_to_stream(self):
         if not self._write_buffer_frozen:
             # On windows, socket.send blows up if given a
             # write buffer that's too large, instead of just
@@ -89,7 +90,7 @@ class __IOStreamBuffer(object):
             # process.  Therefore we must not call socket.send
             # with more than 128KB at a time.
             _merge_prefix(self._write_buffer, 128 * 1024)
-        num_bytes = stream.write_to_fd(self._write_buffer[0])
+        num_bytes = self._stream.write_to_fd(self._write_buffer[0])
         if num_bytes == 0:
             # With OpenSSL, if we couldn't write the entire buffer,
             # the very same string object must be used on the
@@ -107,8 +108,8 @@ class __IOStreamBuffer(object):
         self._write_buffer_size -= num_bytes
         return True
 
-    def read_from_stream(self, stream):
-        chunk = stream.read_from_fd()
+    def read_from_stream(self):
+        chunk = self._stream.read_from_fd()
         if chunk is None:
             return 0
         self._read_buffer.append(chunk)
@@ -174,7 +175,7 @@ def _merge_prefix(deque, size):
     if not deque:
         deque.appendleft(b"")
 
-from speedups import IOStreamBuffer as __C_IOStreamBuffer
+from tornado.speedups import IOStreamBuffer as __C_IOStreamBuffer
 
 IOStreamBuffer = __C_IOStreamBuffer
 # IOStreamBuffer = __IOStreamBuffer
