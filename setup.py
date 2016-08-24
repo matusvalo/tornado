@@ -114,7 +114,9 @@ if (platform.python_implementation() == 'CPython' and
     # produces equivalent performance.
     kwargs['ext_modules'] = [
         Extension('tornado.speedups',
-                  sources=['tornado/speedups.c']),
+                  sources=['tornado/speedups.c'],
+                  extra_compile_args = ["-std=c99"],
+                  ),
     ]
 
     if os.environ.get('TORNADO_EXTENSION') != '1':

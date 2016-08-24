@@ -6,6 +6,8 @@ typedef struct {
     /* Type-specific fields go here. */
     int read_buffer_size;
     int write_buffer_size;
+    unsigned int write_buffer_offset;
+    PyObject *write_pending;
     PyObject *stream;
     PyObject *read_buffer;
     PyObject *write_buffer;
@@ -17,6 +19,11 @@ typedef struct {
 static PyObject *collections_module;
 static PyObject *unsatisfiable_read_error;
 static PyObject *stream_buffer_full_error;
+
+static PyObject *read_from_fd_method_name;
+static PyObject *write_to_fd_method_name;
+static PyObject *appendleft_method_name;
+static PyObject *append_method_name;
 
 static inline int
 check_max_bytes(int read_max_bytes, int size);
@@ -174,10 +181,21 @@ initspeedups(void) {
     if(collections_module == NULL)
         return;
 
+    read_from_fd_method_name = PyString_FromString("read_from_fd");
+    write_to_fd_method_name = PyString_FromString("write_to_fd");
+    appendleft_method_name = PyString_FromString("appendleft");
+    append_method_name = PyString_FromString("append");
+
     Py_INCREF(&speedups_IOStreamBufferType);
     PyModule_AddObject(m, "IOStreamBuffer", (PyObject *)&speedups_IOStreamBufferType);
     PyModule_AddObject(m, "collections", collections_module);
     PyModule_AddObject(m, "UnsatisfiableReadError", unsatisfiable_read_error);
     PyModule_AddObject(m, "StreamBufferFullError", stream_buffer_full_error);
+    PyModule_AddObject(m, "append_method_name", append_method_name);
+    PyModule_AddObject(m, "appendleft_method_name", appendleft_method_name);
+    PyModule_AddObject(m, "write_to_fd_method_name", write_to_fd_method_name);
+    PyModule_AddObject(m, "read_from_fd_method_name", read_from_fd_method_name);
+
 }
 #endif
+

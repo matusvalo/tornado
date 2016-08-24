@@ -127,7 +127,7 @@ class BaseIOStream(object):
         self.read_chunk_size = min(read_chunk_size or 65536,
                                    self.max_buffer_size // 2)
         self.error = None
-        self._stream_buffer = IOStreamBuffer(max_write_buffer_size)
+        self._stream_buffer = IOStreamBuffer(self, max_write_buffer_size)
         self._read_delimiter = None
         self._read_regex = None
         self._read_bytes = None
@@ -681,7 +681,7 @@ class BaseIOStream(object):
         """
         while True:
             try:
-                chunk_len = self._stream_buffer.read_from_stream(self)
+                chunk_len = self._stream_buffer.read_from_stream()
             except (socket.error, IOError, OSError) as e:
                 if errno_from_exception(e) == errno.EINTR:
                     continue
@@ -722,7 +722,7 @@ class BaseIOStream(object):
     def _handle_write(self):
         while self._stream_buffer._write_buffer:
             try:
-                if self._stream_buffer.write_to_stream(self):
+                if self._stream_buffer.write_to_stream():
                     break
             except (socket.error, IOError, OSError) as e:
                 if e.args[0] in _ERRNO_WOULDBLOCK:
@@ -889,7 +889,7 @@ class IOStream(BaseIOStream):
         return chunk
 
     def write_to_fd(self, data):
-        return self.socket.send(data)
+        return  self.socket.send(data)
 
     def connect(self, address, callback=None, server_hostname=None):
         """Connects the socket to a remote address without blocking.
